@@ -1,4 +1,4 @@
-import { action, makeObservable, observable, ObservableMap } from 'mobx';
+import {action, makeObservable, observable, ObservableMap} from 'mobx';
 import {connectWebSocket, registerHandler, unregisterHandler, WSMsgType} from 'WS';
 import {default as Viva} from 'vivagraphjs';
 
@@ -23,17 +23,83 @@ export class tangleBooked {
 }
 
 export class tangleConfirmed {
-    ID:            string;
-    gof:            string;
+    ID: string;
+    gof: string;
     confirmedTime: number;
 }
 
 export class tangleFutureMarkerUpdated {
-    ID:             string;
+    ID: string;
     futureMarkerID: string;
 }
 
-const vertexSize = 20;
+export enum parentRefType {
+    StrongRef,
+    WeakRef,
+    LikedRef,
+}
+
+export type linkData = {
+    "type": parentRefType
+}
+
+export type vertexStyle = {
+    "color"?: string,
+    "size"?: number,
+}
+
+export type linkStyle = {
+    "color"?: string,
+    "width"?: number,
+    "lineType"?: string,
+}
+
+const vertexStyles: { [key: string]: vertexStyle } = {
+    "messagePending": {
+        "color": "#b9b7bd",
+    },
+    "messageConfirmed": {
+        "color": "#6c71c4",
+    },
+    "transactionPending": {
+        "color": "#393e46",
+    },
+    "transactionConfirmed": {
+        "color": "#fad02c",
+    },
+    "tip": {
+        "color": "#cb4b16"
+    },
+    "unknown": {
+        "color": "#b58900"
+    },
+    "selected": {
+        "color": "#859900",
+        "size": 30
+    },
+    "default": {
+        "size": 20
+    }
+}
+
+const linkStyles: { [key: string]: linkStyle } = {
+    "weakLink": {
+        "color": "#586e75",
+    },
+    "strongLink": {
+        "color": "#371A51",
+    },
+    "likedLink": {
+        "color": "#3b6f3b",
+    },
+    "pastConeLink": {
+        "color": "#b58900",
+    },
+    "futureConeLink": {
+        "color": "#d33682"
+    }
+}
+
 
 export class TangleStore {
     @observable maxTangleVertices: number = 100;
@@ -250,30 +316,26 @@ export class TangleStore {
             this.updateNodeColor(msg);
         }
 
-        if (msg.strongParentIDs) {
-            msg.strongParentIDs.forEach((value) => {
-                // if value is valid AND (links is empty OR there is no between parent and children)
-                if ( value && ((!node.links || !node.links.some(link => link.fromId === value)))){
-                    // draw the link only when the parent exists
-                    let existing = this.graph.getNode(value);
-                    if (existing) {
-                        this.graph.addLink(value, msg.ID);
+        let drawVertexParentReference = (parentType: parentRefType, parentIDs: Array<string>) => {
+            if (parentIDs) {
+                parentIDs.forEach((value) => {
+                    // if value is valid AND (links is empty OR there is no between parent and children)
+                    if (value && ((!node.links || !node.links.some(link => link.fromId === value)))) {
+                        // draw the link only when the parent exists
+                        let existing = this.graph.getNode(value);
+                        if (existing) {
+                            let data: linkData = {"type": parentType}
+                            let link = this.graph.addLink(value, msg.ID, data);
+                            this.updateLinkColor(link)
+                        }
                     }
-                }
-            })
+                })
+            }
+
         }
-        if (msg.weakParentIDs){
-            msg.weakParentIDs.forEach((value) => {
-                // if value is valid AND (links is empty OR there is no between parent and children)
-                if ( value && ((!node.links || !node.links.some(link => link.fromId === value)))){
-                    // draw the link only when the parent exists
-                    let existing = this.graph.getNode(value);
-                    if (existing) {
-                        this.graph.addLink(value, msg.ID);
-                    }
-                }
-            })
-        }
+        drawVertexParentReference(parentRefType.StrongRef, msg.strongParentIDs)
+        drawVertexParentReference(parentRefType.WeakRef, msg.weakParentIDs)
+        drawVertexParentReference(parentRefType.LikedRef, msg.likedParentIDs)
     }
 
     // TODO: take tangleVertex instead
@@ -282,14 +344,36 @@ export class TangleStore {
         let nodeUI = this.graphics.getNodeUI(msg.ID);
         let color = "";
         if (!nodeUI || !msg || msg.gof === "GoF(None)") {
-            color = "#b58900";
+            color = vertexStyles["unknown"].color;
         }
         if (msg.isTx) {
-            color = "#fad02c";
+            color = vertexStyles["transactionPending"].color;
         }
-        color = "#6c71c4";
+        color = vertexStyles["messagePending"].color;
 
         nodeUI.color = parseColor(color);
+    }
+
+    updateLinkColor = (link: any) => {
+        // update link line type and color based on reference type
+        const linkUI = this.graphics.getLinkUI(link.id);
+        const parentType = link.data.type
+        if (linkUI) {
+            switch (parentType) {
+                case parentRefType.StrongRef: {
+                    linkUI.color = parseColor(linkStyles["strongLink"].color)
+                    break;
+                }
+                case parentRefType.WeakRef: {
+                    linkUI.color = parseColor(linkStyles["weakLink"].color)
+                    break;
+                }
+                case parentRefType.LikedRef: {
+                    linkUI.color = parseColor(linkStyles["likedLink"].color)
+                    break;
+                }
+            }
+        }
     }
 
     removeVertex = (msgID: string) => {
@@ -297,7 +381,7 @@ export class TangleStore {
         if (vert) {
             this.messages.delete(msgID);
             this.graph.removeNode(msgID);
-            
+
             vert.strongParentIDs.forEach((value) => {
                 this.deleteApproveeLink(value)
             })
@@ -318,8 +402,8 @@ export class TangleStore {
         let node = this.graph.getNode(vert.ID);
         let nodeUI = this.graphics.getNodeUI(vert.ID);
         this.selected_origin_color = nodeUI.color
-        nodeUI.color = parseColor("#859900");
-        nodeUI.size = vertexSize * 1.5;
+        nodeUI.color = parseColor(vertexStyles["selected"].color);
+        nodeUI.size = vertexStyles["selected"].size;
 
         const seenForward = [];
         const seenBackwards = [];
@@ -331,7 +415,7 @@ export class TangleStore {
             true,
             link => {
                 const linkUI = this.graphics.getLinkUI(link.id);
-                linkUI.color = parseColor("#d33682");
+                linkUI.color = parseColor(linkStyles["futureConeLink"].color);
             },
             seenForward
         );
@@ -339,7 +423,7 @@ export class TangleStore {
                 this.selected_approvees_count++;
             }, false, link => {
                 const linkUI = this.graphics.getLinkUI(link.id);
-                linkUI.color = parseColor("#b58900");
+                linkUI.color = parseColor(linkStyles["pastConeLink"].color);
             },
             seenBackwards
         );
@@ -347,8 +431,7 @@ export class TangleStore {
 
     resetLinks = () => {
         this.graph.forEachLink((link) => {
-            const linkUI = this.graphics.getLinkUI(link.id);
-            linkUI.color = parseColor("#586e75");
+            this.updateLinkColor(link)
         });
     }
 
@@ -371,7 +454,7 @@ export class TangleStore {
 
         let nodeUI = this.graphics.getNodeUI(this.selectedMsg.ID);
         nodeUI.color = this.selected_origin_color;
-        nodeUI.size = vertexSize;
+        nodeUI.size = vertexStyles["default"].size;
 
         const seenForward = [];
         const seenBackwards = [];
@@ -379,7 +462,7 @@ export class TangleStore {
             }, true,
             link => {
                 const linkUI = this.graphics.getLinkUI(link.id);
-                linkUI.color = parseColor("#586e75");
+                linkUI.color = parseColor(linkStyles["pastCone"]);
             },
             seenBackwards
         );
@@ -387,7 +470,7 @@ export class TangleStore {
             }, false,
             link => {
                 const linkUI = this.graphics.getLinkUI(link.id);
-                linkUI.color = parseColor("#586e75");
+                linkUI.color = parseColor(linkStyles["futureCone"]);
             },
             seenForward
         );
@@ -412,9 +495,9 @@ export class TangleStore {
         });
 
         graphics.node((node) => {
-            return Viva.Graph.View.webglSquare(vertexSize, "#b9b7bd");
+            return Viva.Graph.View.webglSquare(vertexStyles["default"].size, vertexStyles["messagePending"].color);
         })
-        graphics.link(() => Viva.Graph.View.webglLine("#586e75"));
+        graphics.link(() => Viva.Graph.View.webglLine(parseColor(linkStyles["strongLink"])));
         let ele = document.getElementById('tangleVisualizer');
         this.renderer = Viva.Graph.View.renderer(this.graph, {
             container: ele, graphics, layout,
