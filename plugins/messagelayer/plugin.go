@@ -118,6 +118,9 @@ func configure(plugin *node.Plugin) {
 	fcob.LocallyFinalizedThreshold = time.Duration(Parameters.FCOB.QuarantineTime+Parameters.FCOB.QuarantineTime) * time.Second
 
 	configureApprovalWeight()
+
+	plugin.LogInfo("Recovering tips from the Tangle. This can take a while depending on the size of the Tangle.")
+	Tangle().TipManager.Set(retrieveTips()...)
 }
 
 func run(*node.Plugin) {
@@ -167,14 +170,12 @@ func Tangle() *tangle.Tangle {
 		tangleInstance.Setup()
 	})
 
-	plugin.LogInfo("Recovering tips from the Tangle. This can take a while depending on the size of the Tangle.")
-	tangleInstance.TipManager.Set(retrieveTips()...)
 	return tangleInstance
 }
 
 func retrieveTips() (tips []tangle.MessageID) {
-	tangleInstance.Utils.WalkMessageID(func(messageID tangle.MessageID, walker *walker.Walker) {
-		if !tangleInstance.Storage.Approvers(messageID).Consume(func(approver *tangle.Approver) {
+	Tangle().Utils.WalkMessageID(func(messageID tangle.MessageID, walker *walker.Walker) {
+		if !Tangle().Storage.Approvers(messageID).Consume(func(approver *tangle.Approver) {
 			walker.Push(approver.ApproverMessageID())
 		}) {
 			tips = append(tips, messageID)
