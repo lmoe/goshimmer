@@ -5,8 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iotaledger/hive.go/kvstore"
-
 	"github.com/iotaledger/goshimmer/packages/consensus/fcob"
 	"github.com/iotaledger/goshimmer/packages/ledgerstate"
 	"github.com/iotaledger/goshimmer/packages/mana"
@@ -14,6 +12,8 @@ import (
 	"github.com/iotaledger/goshimmer/packages/tangle"
 	"github.com/iotaledger/goshimmer/plugins/autopeering/local"
 	"github.com/iotaledger/goshimmer/plugins/database"
+	"github.com/iotaledger/hive.go/datastructure/walker"
+	"github.com/iotaledger/hive.go/kvstore"
 
 	"github.com/cockroachdb/errors"
 	"github.com/iotaledger/hive.go/crypto/ed25519"
@@ -166,7 +166,22 @@ func Tangle() *tangle.Tangle {
 
 		tangleInstance.Setup()
 	})
+
+	plugin.LogInfo("Recovering tips from the Tangle. This can take a while depending on the size of the Tangle.")
+	tangleInstance.TipManager.Set(retrieveTips()...)
 	return tangleInstance
+}
+
+func retrieveTips() (tips []tangle.MessageID) {
+	tangleInstance.Utils.WalkMessageID(func(messageID tangle.MessageID, walker *walker.Walker) {
+		if !tangleInstance.Storage.Approvers(messageID).Consume(func(approver *tangle.Approver) {
+			walker.Push(approver.ApproverMessageID())
+		}) {
+			tips = append(tips, messageID)
+		}
+	}, tangle.MessageIDs{tangle.EmptyMessageID})
+
+	return tips
 }
 
 // endregion ///////////////////////////////////////////////////////////////////////////////////////////////////////////
